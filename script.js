@@ -37,7 +37,7 @@ function midpoint(x, y) {
 
 function date2day(date) {
     let [year, month, day] = date.split("-");
-    return year * 365 + month * 30 + day;
+    return year * 365 + month * 31 + day;
 }
 
 function compare_dates(a, b) {
