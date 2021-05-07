@@ -22,7 +22,9 @@ function parse_time(s) {
     let [hour, min] = time.split(":");
     hour = parseInt(hour);
     min = parseInt(min);
-    console.assert(ampm == "AM" || ampm == "PM", "Expected AM or PM");
+    if (ampm != 'AM' && ampm != 'PM') {
+        throw `Unable to parse time from "${s}"`;
+    }
     if (ampm == "PM") {
         hour += 12;
     }
@@ -33,43 +35,44 @@ function midpoint(x, y) {
     return x + (y - x) / 2;
 }
 
-function compare_records(a, b) {
-    let [name_a, _1, _2, _3, date_a, class_index_a] = a;
-    let [name_b, _4, _5, _6, date_b, class_index_b] = b;
+function date2day(date) {
+    let [year, month, day] = date.split("-");
+    return year * 365 + month * 30 + day;
+}
 
-    if (class_index_a < class_index_b) {
+function compare_dates(a, b) {
+    a = date2day(a);
+    b = date2day(b);
+    if (a < b) {
         return -1;
     }
-    if (class_index_a > class_index_b) {
+    if (a > b) {
+        return 1;
+    }
+    return 0;
+}
+
+function compare_records(a, b) {
+    if (a.class_index < b.class_index) {
+        return -1;
+    }
+    if (a.class_index > b.class_index) {
         return 1;
     }
 
-    let [_7, last_name_a] = name_a.split(" ");
-    let [_8, last_name_b] = name_b.split(" ");
-    let cmp = last_name_a.localeCompare(last_name_b, 'en', { sensitivity: 'base' });
+    let cmp = a.last_name.localeCompare(b.last_name, 'en', { sensitivity: 'base' });
     if (cmp != 0) {
         return cmp;
     }
 
-    let [year_a, month_a, day_a] = date_a.split("-");
-    let [year_b, month_b, day_b] = date_b.split("-");
-    if (year_a < year_b) {
-        return -1;
+    cmp = a.first_name.localeCompare(b.first_name, 'en', { sensitivity: 'base' });
+    if (cmp != 0) {
+        return cmp;
     }
-    if (year_a > year_b) {
-        return 1;
-    }
-    if (month_a < month_b) {
-        return -1;
-    }
-    if (month_a > month_b) {
-        return 1;
-    }
-    if (day_a < day_b) {
-        return -1;
-    }
-    if (day_a > day_b) {
-        return 1;
+
+    cmp = compare_dates(a.date, b.date);
+    if (cmp != 0) {
+        return cmp;
     }
     return 0;
 }
@@ -87,10 +90,21 @@ function download(filename, text) {
     document.body.removeChild(element);
 }
 
+async function main(event) {
+    try {
+        await handle_files(event);
+    } catch (error) {
+        error = `Exception occurred:\n${error}`;
+        for (let line of error.split("\n")) {
+            let element = document.createElement('li');
+            element.appendChild(document.createTextNode(line));
+            output.appendChild(element);
+        }
+    }
+}
+
 async function handle_files(event) {
     let file_list = event.target;
-    output.innerHTML = '';
-
     let classes = [
         ["5th grade", "9:10 AM"],
         ["4th grade", "10:00 AM"],
@@ -108,43 +122,53 @@ async function handle_files(event) {
         let date = file.name.split(' ')[0];
 
         let text = await read_file(file);
-        for (let line of text.split("\n").slice(1)) {
+        let lines = text.split("\n");
+        let field_names = lines[0].split(",");
+
+        for (let line of lines.slice(1)) {
             if (line == "") {
                 continue;
             }
-            line = line.split(",");
-            let name = line[0];
-            let email = line[1];
-            let duration = line[2];
-            let entered = line[3];
-            let exited = line[4];
-            let entered_min = parse_time(entered);
-            let exited_min = parse_time(exited);
-            let time = midpoint(entered_min, exited_min);
+            try {
+                let [first_name, last_name, email, duration, entered, exited] = line.split(",");
+                let entered_min = parse_time(entered);
+                let exited_min = parse_time(exited);
+                let time = midpoint(entered_min, exited_min);
 
-            let class_index = -1;
-            for (let i = classes.length; i > 0; i -= 1) {
-                let class_start_time = classes[i - 1][1];
-                if (time >= class_start_time) {
-                    class_index = i - 1;
-                    break;
+                let class_index = -1;
+                for (let i = classes.length; i > 0; i -= 1) {
+                    let class_start_time = classes[i - 1][1];
+                    if (time >= class_start_time) {
+                        class_index = i - 1;
+                        break;
+                    }
                 }
+                let r = {
+                    first_name: first_name,
+                    last_name: last_name,
+                    email: email,
+                    entered: entered,
+                    exited: exited,
+                    date: date,
+                    class_index: class_index,
+                };
+                records.push(r)
+            } catch (error) {
+                throw `Error processing "${line}":\n${error}`;
             }
-            console.assert(class_index != -1, "Enter/exit time didn't match any class period");
-
-            records.push([name, email, entered, exited, date, class_index]);
         }
     }
     records.sort(compare_records);
 
     let text = "";
-    for (let record of records) {
-        let [name, email, entered, exited, date, class_index] = record;
-        let class_name = classes[class_index][0];
-        text += `${class_name},${name},${date},${entered},${exited},${email}\n`;
+    for (let r of records) {
+        let class_name = 'INVALID';
+        if (r.class_index != -1) {
+            class_name = classes[r.class_index][0];
+        }
+        text += `${class_name},${r.last_name},${r.first_name},${r.date},${r.entered},${r.exited},${r.email}\n`;
     }
-    console.log(text);
     download('attendance.csv', text);
 }
 
-file_selector.addEventListener('change', handle_files);
+file_selector.addEventListener('change', main);
